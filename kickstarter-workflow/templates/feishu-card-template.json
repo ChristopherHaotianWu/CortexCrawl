@@ -1,0 +1,101 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "config": {
+      "wide_screen_mode": true,
+      "enable_forward": true
+    },
+    "header": {
+      "template": "blue",
+      "title": {
+        "tag": "plain_text",
+        "content": "📊 Kickstarter 监控日报 ({{date}})"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🎯 筛选标准:** 2026年后发布 | 金额 > $500,000 | 每日更新"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 今日统计概览**\n\n🆕 **新增项目:** {{new_count}}\n📈 **更新项目:** {{updated_count}}\n➖ **未变更:** {{unchanged_count}}\n📊 **监控中总计:** {{total_count}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🆕 新增高额项目 (Top 5)**\n{{#new_projects}}\n• **{{name}}**\n  💰 ${{funding}} | 👥 {{backers}} 人 | 🏷️ {{category}} | 🌍 {{country}}\n  [🔗 查看项目]({{url}})\n{{/new_projects}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 项目进度更新 (Top 5)**\n{{#updated_projects}}\n• **{{name}}**\n  💰 ${{current_funding}} *(+${{funding_change}}, {{funding_change_percent}}%)*\n  👥 {{current_backers}} 人 *(+{{backers_change}})*\n{{/updated_projects}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🏆 今日金额冠军**\n\n**{{top_project.name}}**\n💰 ${{top_project.funding}} | 👥 {{top_project.backers}} 人\n🏷️ {{top_project.category}} | 🌍 {{top_project.country}}\n[🔗 查看项目]({{top_project.url}})"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "action",
+        "layout": "bisected",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "📋 查看完整数据"
+            },
+            "type": "primary",
+            "url": "https://www.feishu.cn/base/{{base_id}}"
+          },
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "🔍 浏览 Kickstarter"
+            },
+            "type": "default",
+            "url": "https://www.kickstarter.com/discover/advanced?sort=newest&seed=2801135&page=1"
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "🤖 由 OpenClaw + Kickstarter Monitor 自动发送"
+          }
+        ]
+      }
+    ]
+  }
+}

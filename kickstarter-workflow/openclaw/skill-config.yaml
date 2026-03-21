@@ -1,0 +1,124 @@
+# OpenClaw Skill 配置: Kickstarter Monitor
+# 此配置文件定义了 Kickstarter 项目抓取的规则和参数
+
+skill:
+  name: kickstarter-monitor
+  version: 1.0.0
+  description: 监控 Kickstarter 高额众筹项目
+  
+  # 触发器配置
+  triggers:
+    - type: schedule
+      cron: "0 0 * * *"  # 每天 UTC 00:00 执行
+      timezone: "UTC"
+    
+    # 可选：手动触发
+    - type: webhook
+      path: /api/kickstarter/trigger
+      method: POST
+      auth: bearer_token
+
+  # 数据源配置
+  sources:
+    - name: kickstarter-discover
+      type: api
+      base_url: https://www.kickstarter.com/discover/advanced
+      params:
+        sort: newest
+        seed: 2801135
+        page: 1
+      
+    - name: kickstarter-project
+      type: api
+      base_url: https://www.kickstarter.com/projects
+
+  # 数据处理管道
+  pipeline:
+    steps:
+      # Step 1: 抓取项目列表
+      - name: fetch_projects
+        action: fetch
+        source: kickstarter-discover
+        pagination:
+          enabled: true
+          max_pages: 10
+          param_name: page
+        
+      # Step 2: 初步筛选
+      - name: filter_by_funding
+        action: filter
+        conditions:
+          - field: pledged
+            operator: gte
+            value: 500000
+          - field: currency
+            operator: eq
+            value: USD
+            
+      # Step 3: 日期筛选 (2026-01-01 之后)
+      - name: filter_by_date
+        action: filter
+        conditions:
+          - field: launched_at
+            operator: gte
+            value: "2026-01-01T00:00:00Z"
+            
+      # Step 4: 获取项目详情
+      - name: enrich_project_details
+        action: fetch_details
+        source: kickstarter-project
+        fields:
+          - creator.name          # 创始人
+          - creator.profile       # 创始人资料
+          - location.displayable_name  # 国家/地区
+          - category.name         # 标签/类别
+          - blurb                 # 产品说明
+          - launched_at           # 众筹开始时间
+          - pledged               # 众筹金额
+          - backers_count         # 众筹人数
+          - urls.web.project      # 项目链接
+          
+      # Step 5: 数据格式化
+      - name: format_output
+        action: transform
+        mapping:
+          产品名: "{{name}}"
+          国家: "{{location.displayable_name}}"
+          公司: "{{creator.name}}"
+          标签: "{{category.name}}"
+          产品说明: "{{blurb}}"
+          众筹金额/美金: "{{pledged}}"
+          众筹人数: "{{backers_count}}"
+          众筹开始时间: "{{launched_at | format_date}}"
+          创始人: "{{creator.name}}"
+          项目链接: "{{urls.web.project}}"
+          履历: ""  # 预留，手动补充
+          融资历史: ""  # 预留，手动补充
+
+  # 输出配置
+  output:
+    # 输出到文件 (供 Python 脚本处理)
+    - type: file
+      path: /data/kickstarter/raw_projects.json
+      format: json
+      
+    # 触发下游工作流
+    - type: webhook
+      url: http://localhost:8000/api/process-kickstarter-data
+      method: POST
+      headers:
+        Authorization: "Bearer {{env.OPENCLAW_TOKEN}}"
+
+  # 错误处理
+  error_handling:
+    retry:
+      max_attempts: 3
+      backoff: exponential
+    on_failure:
+      - type: log
+        level: error
+      - type: webhook
+        url: http://localhost:8000/api/alert
+        payload:
+          message: "Kickstarter 抓取失败"
+          error: "{{error.message}}"

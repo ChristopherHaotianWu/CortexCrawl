@@ -1,0 +1,101 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "config": {
+      "wide_screen_mode": true,
+      "enable_forward": true
+    },
+    "header": {
+      "template": "orange",
+      "title": {
+        "tag": "plain_text",
+        "content": "🔥 Product Hunt 监控日报 ({{date}})"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🎯 筛选标准:** 最近30天 | 投票 >= 100 | 每日更新"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 今日统计概览**\n\n🆕 **新增产品:** {{new_count}}\n📈 **更新产品:** {{updated_count}}\n➖ **未变更:** {{unchanged_count}}\n📊 **监控中总计:** {{total_count}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🆕 新增热门产品 (Top 5)**\n{{#new_products}}\n• **{{name}}**\n  👍 {{votes}} 票 | 💬 {{comments}} 评论 | 🏷️ {{topics}}\n  [🔗 查看产品]({{url}})\n{{/new_products}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 产品热度更新 (Top 5)**\n{{#updated_products}}\n• **{{name}}**\n  👍 {{current_votes}} 票 *(+{{votes_change}}, {{votes_change_percent}}%)*\n  💬 {{current_comments}} 评论 *(+{{comments_change}})*\n{{/updated_products}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🏆 今日投票冠军**\n\n**{{top_product.name}}**\n👍 {{top_product.votes}} 票 | 💬 {{top_product.comments}} 评论\n🏷️ {{top_product.topics}} | 👤 {{top_product.maker}}\n[🔗 查看产品]({{top_product.url}})"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "action",
+        "layout": "bisected",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "📋 查看完整数据"
+            },
+            "type": "primary",
+            "url": "https://www.feishu.cn/base/{{base_id}}"
+          },
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "🔍 浏览 Product Hunt"
+            },
+            "type": "default",
+            "url": "https://www.producthunt.com"
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "🤖 由 OpenClaw + Product Hunt Monitor 自动发送"
+          }
+        ]
+      }
+    ]
+  }
+}

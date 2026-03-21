@@ -1,0 +1,120 @@
+# OpenClaw Skill 配置: Product Hunt Monitor
+# 此配置文件定义了 Product Hunt 产品抓取的规则和参数
+
+skill:
+  name: producthunt-monitor
+  version: 1.0.0
+  description: 监控 Product Hunt 热门产品
+  
+  # 触发器配置
+  triggers:
+    - type: schedule
+      cron: "0 8 * * *"  # 每天 UTC 08:00 执行 (北京时间 16:00)
+      timezone: "UTC"
+    
+    # 可选：手动触发
+    - type: webhook
+      path: /api/producthunt/trigger
+      method: POST
+      auth: bearer_token
+
+  # 数据源配置
+  sources:
+    - name: producthunt-api
+      type: api
+      base_url: https://www.producthunt.com/frontend/graphql
+      headers:
+        Content-Type: application/json
+        Accept: application/json
+      # 如果需要认证，在环境变量中设置 PRODUCT_HUNT_API_TOKEN
+
+  # 数据处理管道
+  pipeline:
+    steps:
+      # Step 1: 抓取产品列表
+      - name: fetch_products
+        action: fetch
+        source: producthunt-api
+        pagination:
+          enabled: true
+          max_pages: 20
+          param_name: after
+        
+      # Step 2: 投票数筛选 (>= 100)
+      - name: filter_by_votes
+        action: filter
+        conditions:
+          - field: votesCount
+            operator: gte
+            value: 100
+            
+      # Step 3: 日期筛选 (最近 30 天)
+      - name: filter_by_date
+        action: filter
+        conditions:
+          - field: createdAt
+            operator: gte
+            value: "{{now - 30d | format_date('ISO')}}"
+            
+      # Step 4: 获取产品详情
+      - name: enrich_product_details
+        action: fetch_details
+        source: producthunt-api
+        fields:
+          - name                  # 产品名
+          - tagline              # 标语
+          - description          # 产品说明
+          - votesCount           # 投票数
+          - commentsCount        # 评论数
+          - createdAt            # 发布日期
+          - url                  # 产品链接
+          - website              # 网站链接
+          - thumbnail.url        # 产品图片
+          - topics.edges.node.name  # 话题标签
+          - makers.name          # 制作者
+          - user.name            # 发布者
+          
+      # Step 5: 数据格式化
+      - name: format_output
+        action: transform
+        mapping:
+          产品名: "{{name}}"
+          标语: "{{tagline}}"
+          产品说明: "{{description}}"
+          投票数: "{{votesCount}}"
+          评论数: "{{commentsCount}}"
+          发布日期: "{{createdAt | format_date}}"
+          制作者: "{{makers | map('name') | join(', ') | default(user.name)}}"
+          话题标签: "{{topics.edges | map('node.name') | join(', ')}}"
+          产品链接: "{{url | default(website)}}"
+          产品图片: "{{thumbnail.url}}"
+          履历: ""  # 预留，手动补充
+          融资历史: ""  # 预留，手动补充
+
+  # 输出配置
+  output:
+    # 输出到文件 (供 Python 脚本处理)
+    - type: file
+      path: /data/producthunt/raw_products.json
+      format: json
+      
+    # 触发下游工作流
+    - type: webhook
+      url: http://localhost:8000/api/process-producthunt-data
+      method: POST
+      headers:
+        Authorization: "Bearer {{env.OPENCLAW_TOKEN}}"
+
+  # 错误处理
+  error_handling:
+    retry:
+      max_attempts: 3
+      backoff: exponential
+    on_failure:
+      - type: log
+        level: error
+      - type: webhook
+        url: http://localhost:8000/api/alert
+        payload:
+          message: "Product Hunt 抓取失败"
+          error: "{{error.message}}"
