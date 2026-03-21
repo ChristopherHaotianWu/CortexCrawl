@@ -12,6 +12,7 @@ import os
 import sys
 import json
 import argparse
+import subprocess
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import logging
@@ -36,17 +37,60 @@ class KickstarterMonitor:
         self.feishu = FeishuClient()
         self.processor = DataProcessor()
         
-    def run(self, raw_data_path: Optional[str] = None) -> Dict[str, Any]:
+    def fetch_data(self, full: bool = False) -> None:
+        """
+        调用 JS 抓取脚本获取数据
+
+        Args:
+            full: 是否全量拉取
+        """
+        script_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'openclaw', 'fetch-kickstarter.js'
+        )
+
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"抓取脚本不存在: {script_path}")
+
+        cmd = ['node', script_path]
+        if full:
+            cmd.append('--full')
+
+        mode_label = '全量' if full else '增量'
+        logger.info(f"📡 执行数据抓取 ({mode_label}模式): {' '.join(cmd)}")
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        if result.stdout:
+            logger.info(f"抓取脚本输出:\n{result.stdout}")
+        if result.stderr:
+            logger.warning(f"抓取脚本错误输出:\n{result.stderr}")
+
+        if result.returncode != 0:
+            raise RuntimeError(f"抓取脚本执行失败 (exit code {result.returncode})")
+
+        logger.info(f"✅ 数据抓取完成 ({mode_label}模式)")
+
+    def run(self, raw_data_path: Optional[str] = None, full: bool = False) -> Dict[str, Any]:
         """
         执行完整工作流
-        
+
+        Args:
+            raw_data_path: 原始数据文件路径
+            full: 是否全量拉取 (先调用 JS 抓取脚本全量拉取数据)
+
         Returns:
             执行结果摘要
         """
         start_time = datetime.now()
-        logger.info("🚀 Kickstarter 监控工作流启动")
+        mode_label = '全量' if full else '增量'
+        logger.info(f"🚀 Kickstarter 监控工作流启动 ({mode_label}模式)")
         
         try:
+            # ========== Step 0: 全量模式下先抓取数据 ==========
+            if full:
+                self.fetch_data(full=True)
+
             # ========== Step 1: 加载新数据 ==========
             data_path = raw_data_path or self.config.raw_data_path
             logger.info(f"📂 加载数据: {data_path}")
@@ -260,14 +304,19 @@ def main():
         action='store_true',
         help='测试模式 (不实际更新数据)'
     )
-    
+    parser.add_argument(
+        '--full',
+        action='store_true',
+        help='全量拉取模式 (先调用抓取脚本全量拉取数据，再处理入库)'
+    )
+
     args = parser.parse_args()
-    
+
     # 创建工作流实例
     monitor = KickstarterMonitor()
-    
+
     # 执行
-    result = monitor.run(raw_data_path=args.data_path)
+    result = monitor.run(raw_data_path=args.data_path, full=args.full)
     
     # 输出结果
     print(json.dumps(result, indent=2, default=str))

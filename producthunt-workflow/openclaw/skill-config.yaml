@@ -12,11 +12,20 @@ skill:
       cron: "0 8 * * *"  # 每天 UTC 08:00 执行 (北京时间 16:00)
       timezone: "UTC"
     
-    # 可选：手动触发
+    # 可选：手动触发 (增量抓取)
     - type: webhook
       path: /api/producthunt/trigger
       method: POST
       auth: bearer_token
+
+    # 全量同步：一键抓取 + diff + 入库
+    - type: webhook
+      path: /api/producthunt/full-sync
+      method: POST
+      auth: bearer_token
+      action: script
+      script: /opt/cortexcrawl/producthunt-workflow/run-full-sync.sh
+      timeout: 600
 
   # 数据源配置
   sources:
