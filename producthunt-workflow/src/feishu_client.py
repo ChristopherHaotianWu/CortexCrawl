@@ -1,6 +1,12 @@
 """
 飞书 API 客户端
 支持多维表格操作和机器人消息推送
+
+API 参考: https://open.feishu.cn/document/server-docs/docs/bitable-v1/bitable-overview
+- 列出记录: GET /bitable/v1/apps/:app_token/tables/:table_id/records (page_size 上限 500)
+- 批量新增: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_create (上限 500 条/次)
+- 批量更新: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_update (上限 500 条/次)
+- Token:    POST /auth/v3/tenant_access_token/internal (有效期 2 小时)
 """
 import time
 import requests
@@ -14,6 +20,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+# 飞书写入冲突错误码，需要重试
+_WRITE_CONFLICT_CODE = 1254291
 
 
 class FeishuClient:
@@ -47,8 +55,36 @@ class FeishuClient:
                 else:
                     raise
 
+    def _request_with_conflict_retry(
+        self, method: str, url: str, max_retries: int = 3, conflict_retries: int = 3, **kwargs
+    ) -> Dict[str, Any]:
+        """
+        带写入冲突重试的 API 请求
+
+        飞书在同一数据表中并发写入时可能返回 1254291 冲突错误，
+        参考: https://open.feishu.cn/document/server-docs/docs/bitable-v1/app-table-record/batch_create
+        """
+        for attempt in range(conflict_retries):
+            response = self._request(method, url, max_retries=max_retries, **kwargs)
+            result = response.json()
+
+            if result.get("code") == _WRITE_CONFLICT_CODE and attempt < conflict_retries - 1:
+                wait = 2 ** attempt + 1
+                logger.warning(f"写入冲突 (1254291)，{wait}s 后重试 ({attempt + 1}/{conflict_retries})")
+                time.sleep(wait)
+                continue
+
+            return result
+
+        return result  # 最后一次的结果
+
     def _get_access_token(self) -> str:
-        """获取飞书访问令牌 (带缓存)"""
+        """
+        获取飞书 tenant_access_token (带缓存)
+
+        API: POST /auth/v3/tenant_access_token/internal
+        Token 有效期 2 小时，提前 5 分钟刷新
+        """
         if self._access_token and self._token_expire_time:
             if datetime.now() < self._token_expire_time:
                 return self._access_token
@@ -81,15 +117,19 @@ class FeishuClient:
         """获取请求头"""
         return {
             "Authorization": f"Bearer {self._get_access_token()}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=utf-8"
         }
 
     def list_records(self, filter_formula: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        获取多维表格中的所有记录
+        获取多维表格中的所有记录 (自动分页)
+
+        API: GET /bitable/v1/apps/:app_token/tables/:table_id/records
+        - page_size 上限 500
+        - 通过 page_token 翻页，has_more 判断是否还有数据
 
         Args:
-            filter_formula: 可选的筛选公式
+            filter_formula: 可选的筛选公式 (长度上限 2000 字符)
 
         Returns:
             记录列表，每条记录包含 record_id 和 fields
@@ -133,6 +173,11 @@ class FeishuClient:
         """
         批量创建记录
 
+        API: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_create
+        - 单次上限 500 条
+        - 频率限制 50 次/秒
+        - 同一数据表并发写入可能冲突 (错误码 1254291)
+
         Args:
             records: 记录字段列表
 
@@ -141,7 +186,6 @@ class FeishuClient:
         """
         url = f"{self.BASE_URL}/bitable/v1/apps/{self.config.base_id}/tables/{self.config.table_id}/records/batch_create"
 
-        # 飞书限制每次最多 500 条
         batch_size = 500
         created_records = []
 
@@ -150,25 +194,34 @@ class FeishuClient:
             data = {"records": [{"fields": r} for r in batch]}
 
             try:
-                response = self._request("POST", url, headers=self._get_headers(), json=data)
-                result = response.json()
+                result = self._request_with_conflict_retry(
+                    "POST", url, headers=self._get_headers(), json=data
+                )
 
                 if result.get("code") != 0:
                     raise Exception(f"批量创建记录失败: {result}")
 
                 created = result.get("data", {}).get("records", [])
                 created_records.extend(created)
-                logger.info(f"成功创建 {len(created)} 条记录")
+                logger.info(f"成功创建 {len(created)} 条记录 (批次 {i // batch_size + 1})")
 
             except Exception as e:
                 logger.error(f"批量创建记录失败: {e}")
                 raise
+
+            # 批次间延迟，避免同一数据表并发写入冲突
+            if i + batch_size < len(records):
+                time.sleep(1)
 
         return created_records
 
     def update_records(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         批量更新记录
+
+        API: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_update
+        - 单次上限 500 条
+        - 请求体: {"records": [{"record_id": "xxx", "fields": {...}}, ...]}
 
         Args:
             records: 包含 record_id 和 fields 的记录列表
@@ -187,19 +240,24 @@ class FeishuClient:
             data = {"records": batch}
 
             try:
-                response = self._request("POST", url, headers=self._get_headers(), json=data)
-                result = response.json()
+                result = self._request_with_conflict_retry(
+                    "POST", url, headers=self._get_headers(), json=data
+                )
 
                 if result.get("code") != 0:
                     raise Exception(f"批量更新记录失败: {result}")
 
                 updated = result.get("data", {}).get("records", [])
                 updated_records.extend(updated)
-                logger.info(f"成功更新 {len(updated)} 条记录")
+                logger.info(f"成功更新 {len(updated)} 条记录 (批次 {i // batch_size + 1})")
 
             except Exception as e:
                 logger.error(f"批量更新记录失败: {e}")
                 raise
+
+            # 批次间延迟
+            if i + batch_size < len(records):
+                time.sleep(1)
 
         return updated_records
 

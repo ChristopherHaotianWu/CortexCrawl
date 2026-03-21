@@ -19,14 +19,21 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # then fill in real credentials
 
-# Run workflow
-python src/main.py                          # full run
+# Run workflow (incremental, requires existing raw data file)
+python src/main.py                          # incremental run
 python src/main.py --data-path /custom/path/to/raw.json
 python src/main.py --test                   # test mode (no Feishu writes)
 
-# Trigger OpenClaw skill manually (on server)
+# Full sync: fetch all data + diff + sync to Feishu (first-time setup or manual backfill)
+python src/main.py --full                   # full pipeline
+./run-full-sync.sh                          # shell script version
+./run-full-sync.sh --test                   # full fetch + diff only (no writes)
+
+# Trigger via OpenClaw webhook (on server)
 curl -X POST http://47.254.73.23:8080/api/kickstarter/trigger \
-  -H "Authorization: Bearer $OPENCLAW_TOKEN"
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"           # incremental
+curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"           # full sync
 ```
 
 ## Architecture
@@ -52,7 +59,9 @@ GraphQL APIs (Kickstarter / Product Hunt)
 
 **`src/feishu_client.py`** — Feishu API wrapper with 2-hour token caching (refreshed 5 min early). Key methods: `list_records()`, `create_records()` (batch), `update_records()` (batch), `send_webhook_card()`.
 
-**`src/main.py`** — Orchestrates 5 steps: load raw data → fetch Feishu records → process (dedup+update) → write to Feishu → send notification card. Outputs JSON result summary to stdout.
+**`src/main.py`** — Orchestrates 5 steps: load raw data → fetch Feishu records → process (dedup+update) → write to Feishu → send notification card. Supports `--full` flag for full data pull (calls JS fetcher automatically). Outputs JSON result summary to stdout.
+
+**`run-full-sync.sh`** — One-click full sync script: runs JS fetcher in full mode → Python processor (diff + sync). Can be triggered via OpenClaw webhook at `/api/*/full-sync`.
 
 ### Deduplication Logic
 Records are matched by `project_url` / `product_url` as the dedup key. When a URL already exists in Feishu, only changed numeric fields are updated; manual research fields are left untouched. Missing items in new data are kept (archive behavior, no deletes).

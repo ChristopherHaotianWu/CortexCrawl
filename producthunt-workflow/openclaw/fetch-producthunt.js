@@ -1,9 +1,11 @@
 /**
  * OpenClaw Skill: Product Hunt 产品抓取脚本
- * 
+ *
  * 此脚本用于从 Product Hunt 抓取符合条件的产品
  * 筛选条件: 投票数 >= 100, 最近 30 天内发布
- * 
+ *
+ * 支持 --full 参数进行全量拉取 (无筛选条件限制)
+ *
  * 需要配置 PRODUCT_HUNT_API_TOKEN 环境变量
  */
 
@@ -11,10 +13,14 @@ const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
 
+// 解析命令行参数
+const isFullMode = process.argv.includes('--full');
+
 // 配置
 const CONFIG = {
-  minVotes: 100,
-  daysBack: 30,
+  minVotes: isFullMode ? 0 : 100,
+  daysBack: isFullMode ? 365 : 30,
+  maxPages: isFullMode ? 50 : 20,
   outputPath: '/data/producthunt/raw_products.json',
   // Product Hunt GraphQL API 端点
   graphqlEndpoint: 'https://www.producthunt.com/frontend/graphql',
@@ -23,12 +29,59 @@ const CONFIG = {
 };
 
 /**
- * Product Hunt GraphQL 查询
- * 获取最近发布的热门产品
+ * Product Hunt GraphQL 查询 (增量模式，带 postedAfter)
  */
 const POSTS_QUERY = `
   query Posts($first: Int, $after: String, $order: PostsOrder, $postedAfter: DateTime) {
     posts(first: $first, after: $after, order: $order, postedAfter: $postedAfter) {
+      edges {
+        node {
+          id
+          name
+          tagline
+          description
+          votesCount
+          commentsCount
+          createdAt
+          url
+          website
+          thumbnail {
+            url
+          }
+          topics {
+            edges {
+              node {
+                name
+              }
+            }
+          }
+          makers {
+            id
+            name
+            username
+          }
+          user {
+            id
+            name
+            username
+          }
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+/**
+ * Product Hunt GraphQL 查询 (全量模式，不带 postedAfter)
+ */
+const POSTS_QUERY_FULL = `
+  query Posts($first: Int, $after: String, $order: PostsOrder) {
+    posts(first: $first, after: $after, order: $order) {
       edges {
         node {
           id
@@ -88,24 +141,44 @@ async function fetchProducts() {
   let hasNextPage = true;
   let cursor = null;
   let page = 0;
-  
-  const postedAfter = getDateDaysAgo(CONFIG.daysBack);
-  
-  console.log(`🚀 开始抓取 Product Hunt 产品 (最近 ${CONFIG.daysBack} 天)...`);
-  
+
+  const modeLabel = isFullMode ? '全量' : '增量';
+
+  console.log(`🚀 开始抓取 Product Hunt 产品 (${modeLabel}模式)...`);
+  if (isFullMode) {
+    console.log('📦 全量模式: 无筛选条件限制，最多抓取 50 页');
+  } else {
+    console.log(`📅 增量模式: 最近 ${CONFIG.daysBack} 天，投票数 >= ${CONFIG.minVotes}`);
+  }
+
   const headers = {
     'Content-Type': 'application/json',
     'Accept': 'application/json'
   };
-  
+
   // 如果有 API Token，添加到请求头
   if (CONFIG.apiToken) {
     headers['Authorization'] = `Bearer ${CONFIG.apiToken}`;
   }
-  
-  while (hasNextPage && page < 20) {
+
+  while (hasNextPage && page < CONFIG.maxPages) {
     let response;
     let lastError;
+
+    // 构建请求变量
+    const variables = {
+      first: 50,
+      after: cursor,
+      order: 'POPULARITY'
+    };
+
+    let query;
+    if (isFullMode) {
+      query = POSTS_QUERY_FULL;
+    } else {
+      query = POSTS_QUERY;
+      variables.postedAfter = getDateDaysAgo(CONFIG.daysBack);
+    }
 
     // 重试逻辑：最多 3 次，指数退避
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -113,13 +186,8 @@ async function fetchProducts() {
         response = await axios.post(
           CONFIG.graphqlEndpoint,
           {
-            query: POSTS_QUERY,
-            variables: {
-              first: 50,
-              after: cursor,
-              order: 'POPULARITY',
-              postedAfter: postedAfter
-            }
+            query: query,
+            variables: variables
           },
           {
             headers: headers,
@@ -163,7 +231,7 @@ async function fetchProducts() {
     for (const edge of edges) {
       const product = edge.node;
 
-      // 投票数筛选
+      // 投票数筛选 (全量模式 minVotes=0，等于跳过)
       const votesCount = product.votesCount || 0;
       if (votesCount < CONFIG.minVotes) {
         continue;
@@ -210,8 +278,8 @@ async function fetchProducts() {
     // 避免请求过快
     await sleep(1000);
   }
-  
-  console.log(`✅ 抓取完成，共 ${products.length} 个产品符合筛选条件`);
+
+  console.log(`✅ 抓取完成 (${modeLabel}模式)，共 ${products.length} 个产品`);
   return products;
 }
 
@@ -223,17 +291,18 @@ async function saveProducts(products) {
     // 确保目录存在
     const dir = path.dirname(CONFIG.outputPath);
     await fs.mkdir(dir, { recursive: true });
-    
+
     // 保存为 JSON
     await fs.writeFile(
       CONFIG.outputPath,
       JSON.stringify({
         timestamp: new Date().toISOString(),
+        mode: isFullMode ? 'full' : 'incremental',
         count: products.length,
         products: products
       }, null, 2)
     );
-    
+
     console.log(`💾 数据已保存到: ${CONFIG.outputPath}`);
   } catch (error) {
     console.error('❌ 保存数据失败:', error.message);
@@ -256,17 +325,18 @@ async function main() {
     if (!CONFIG.apiToken) {
       console.warn('⚠️ 未设置 PRODUCT_HUNT_API_TOKEN，可能遇到访问限制');
     }
-    
+
     const products = await fetchProducts();
     await saveProducts(products);
-    
+
     // 输出结果供 OpenClaw 捕获
     console.log(JSON.stringify({
       success: true,
+      mode: isFullMode ? 'full' : 'incremental',
       count: products.length,
       file: CONFIG.outputPath
     }));
-    
+
   } catch (error) {
     console.error('❌ 执行失败:', error.message);
     process.exit(1);

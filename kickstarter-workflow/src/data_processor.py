@@ -28,6 +28,39 @@ def _to_int(value, default: int = 0) -> int:
         return default
 
 
+def _date_to_timestamp_ms(date_str: str) -> Optional[int]:
+    """
+    将日期字符串转换为毫秒时间戳 (飞书日期字段要求)
+
+    支持格式:
+    - ISO 8601: "2026-03-01T08:00:00.000Z"
+    - 日期: "2026-03-01"
+    - Unix 秒级时间戳 (数字字符串)
+    """
+    if not date_str:
+        return None
+
+    # 已经是数字 (秒级时间戳)
+    try:
+        ts = float(date_str)
+        if ts > 1e12:  # 已经是毫秒
+            return int(ts)
+        return int(ts * 1000)
+    except (ValueError, TypeError):
+        pass
+
+    # ISO 8601 格式
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            return int(dt.timestamp() * 1000)
+        except ValueError:
+            continue
+
+    logger.warning(f"无法解析日期: {date_str}，将原样传递")
+    return None
+
+
 @dataclass
 class Project:
     """Kickstarter 项目数据模型"""
@@ -65,8 +98,16 @@ class Project:
         )
     
     def to_feishu_fields(self) -> Dict[str, Any]:
-        """转换为飞书多维表格字段格式"""
-        return {
+        """
+        转换为飞书多维表格字段格式
+
+        字段类型对照 (飞书 API 要求):
+        - 文本: 字符串
+        - 数字: 数字
+        - 日期: 毫秒时间戳
+        - 超链接: {"text": "显示文本", "link": "URL"}
+        """
+        fields = {
             TABLE_FIELDS["product_name"]: self.product_name,
             TABLE_FIELDS["country"]: self.country,
             TABLE_FIELDS["company"]: self.company,
@@ -74,15 +115,23 @@ class Project:
             TABLE_FIELDS["description"]: self.description,
             TABLE_FIELDS["funding_amount"]: self.funding_amount,
             TABLE_FIELDS["backers_count"]: self.backers_count,
-            TABLE_FIELDS["launch_date"]: self.launch_date,
             TABLE_FIELDS["founder"]: self.founder,
             TABLE_FIELDS["project_url"]: {
-                "text": "查看项目",
+                "text": self.product_name or "查看项目",
                 "link": self.project_url
             } if self.project_url else "",
             TABLE_FIELDS["background"]: self.background,
             TABLE_FIELDS["funding_history"]: self.funding_history
         }
+
+        # 日期字段: 转换为毫秒时间戳
+        launch_ts = _date_to_timestamp_ms(self.launch_date)
+        if launch_ts is not None:
+            fields[TABLE_FIELDS["launch_date"]] = launch_ts
+        else:
+            fields[TABLE_FIELDS["launch_date"]] = self.launch_date
+
+        return fields
     
     def get_update_fields(self, old_amount: float, old_backers: int) -> Dict[str, Any]:
         """

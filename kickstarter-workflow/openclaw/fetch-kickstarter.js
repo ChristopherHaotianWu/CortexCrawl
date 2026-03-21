@@ -1,26 +1,31 @@
 /**
  * OpenClaw Skill: Kickstarter 项目抓取脚本
- * 
+ *
  * 此脚本用于从 Kickstarter 抓取符合条件的项目
  * 筛选条件: 2026-01-01 之后发布, 金额 > $500,000
+ *
+ * 支持 --full 参数进行全量拉取 (无筛选条件限制)
  */
 
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
 
+// 解析命令行参数
+const isFullMode = process.argv.includes('--full');
+
 // 配置
 const CONFIG = {
-  minFunding: 500000,
-  minLaunchDate: new Date('2026-01-01T00:00:00Z'),
+  minFunding: isFullMode ? 0 : 500000,
+  minLaunchDate: isFullMode ? null : new Date('2026-01-01T00:00:00Z'),
+  maxPages: isFullMode ? 50 : 10,
   outputPath: '/data/kickstarter/raw_projects.json',
   // Kickstarter GraphQL API 端点
   graphqlEndpoint: 'https://www.kickstarter.com/graph'
 };
 
 /**
- * Kickstarter GraphQL 查询
- * 获取活跃且高额众筹项目
+ * Kickstarter GraphQL 查询 (增量模式，带 minPledged 筛选)
  */
 const DISCOVER_QUERY = `
   query DiscoverProjects($sort: ProjectSort, $first: Int, $after: String) {
@@ -67,6 +72,52 @@ const DISCOVER_QUERY = `
 `;
 
 /**
+ * Kickstarter GraphQL 查询 (全量模式，无 minPledged 筛选)
+ */
+const DISCOVER_QUERY_FULL = `
+  query DiscoverProjects($sort: ProjectSort, $first: Int, $after: String) {
+    projects(
+      sort: $sort
+      first: $first
+      after: $after
+      state: LIVE
+    ) {
+      edges {
+        node {
+          id
+          name
+          blurb
+          pledged {
+            currency
+            amount
+          }
+          backersCount
+          launchedAt
+          deadlineAt
+          url
+          location {
+            displayableName
+            country
+          }
+          category {
+            name
+          }
+          creator {
+            name
+            id
+          }
+        }
+        cursor
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+/**
  * 抓取项目数据
  */
 async function fetchProjects() {
@@ -74,10 +125,16 @@ async function fetchProjects() {
   let hasNextPage = true;
   let cursor = null;
   let page = 0;
-  
-  console.log('🚀 开始抓取 Kickstarter 项目...');
-  
-  while (hasNextPage && page < 10) {
+
+  const query = isFullMode ? DISCOVER_QUERY_FULL : DISCOVER_QUERY;
+  const modeLabel = isFullMode ? '全量' : '增量';
+
+  console.log(`🚀 开始抓取 Kickstarter 项目 (${modeLabel}模式)...`);
+  if (isFullMode) {
+    console.log('📦 全量模式: 无筛选条件限制，最多抓取 50 页');
+  }
+
+  while (hasNextPage && page < CONFIG.maxPages) {
     let response;
     let lastError;
 
@@ -87,7 +144,7 @@ async function fetchProjects() {
         response = await axios.post(
           CONFIG.graphqlEndpoint,
           {
-            query: DISCOVER_QUERY,
+            query: query,
             variables: {
               sort: 'NEWEST',
               first: 50,
@@ -134,14 +191,16 @@ async function fetchProjects() {
     for (const edge of edges) {
       const project = edge.node;
 
-      // 日期筛选: 2026-01-01 之后（已按最新排序，遇到旧项目即可提前退出）
-      const launchDate = new Date(project.launchedAt);
-      if (launchDate < CONFIG.minLaunchDate) {
-        reachedOldItems = true;
-        continue;
+      // 日期筛选 (全量模式跳过)
+      if (CONFIG.minLaunchDate) {
+        const launchDate = new Date(project.launchedAt);
+        if (launchDate < CONFIG.minLaunchDate) {
+          reachedOldItems = true;
+          continue;
+        }
       }
 
-      // 金额筛选: > $500,000
+      // 金额筛选 (全量模式 minFunding=0，等于跳过)
       const amount = project.pledged?.amount || 0;
       if (amount < CONFIG.minFunding) {
         continue;
@@ -174,8 +233,8 @@ async function fetchProjects() {
 
     console.log(`📄 第 ${page} 页抓取完成，当前共 ${projects.length} 个项目`);
 
-    // 已按最新排序，遇到旧项目说明后续页也是旧数据，提前退出
-    if (reachedOldItems) {
+    // 增量模式下，已按最新排序，遇到旧项目说明后续页也是旧数据，提前退出
+    if (reachedOldItems && !isFullMode) {
       console.log('📅 已到达筛选日期边界，提前退出');
       break;
     }
@@ -183,8 +242,8 @@ async function fetchProjects() {
     // 避免请求过快
     await sleep(1000);
   }
-  
-  console.log(`✅ 抓取完成，共 ${projects.length} 个项目符合筛选条件`);
+
+  console.log(`✅ 抓取完成 (${modeLabel}模式)，共 ${projects.length} 个项目`);
   return projects;
 }
 
@@ -196,17 +255,18 @@ async function saveProjects(projects) {
     // 确保目录存在
     const dir = path.dirname(CONFIG.outputPath);
     await fs.mkdir(dir, { recursive: true });
-    
+
     // 保存为 JSON
     await fs.writeFile(
       CONFIG.outputPath,
       JSON.stringify({
         timestamp: new Date().toISOString(),
+        mode: isFullMode ? 'full' : 'incremental',
         count: projects.length,
         projects: projects
       }, null, 2)
     );
-    
+
     console.log(`💾 数据已保存到: ${CONFIG.outputPath}`);
   } catch (error) {
     console.error('❌ 保存数据失败:', error.message);
@@ -228,14 +288,15 @@ async function main() {
   try {
     const projects = await fetchProjects();
     await saveProjects(projects);
-    
+
     // 输出结果供 OpenClaw 捕获
     console.log(JSON.stringify({
       success: true,
+      mode: isFullMode ? 'full' : 'incremental',
       count: projects.length,
       file: CONFIG.outputPath
     }));
-    
+
   } catch (error) {
     console.error('❌ 执行失败:', error.message);
     process.exit(1);

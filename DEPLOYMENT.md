@@ -12,6 +12,7 @@
 4. [部署 Kickstarter 工作流](#4-部署-kickstarter-工作流)
 5. [部署 Product Hunt 工作流](#5-部署-product-hunt-工作流)
 6. [定时任务配置](#6-定时任务配置)
+   - 6.1 [全量同步（首次部署 / 手动补数据）](#61-全量同步-首次部署或手动补数据)
 7. [部署验证](#7-部署验证)
 8. [运维速查](#8-运维速查)
 
@@ -20,30 +21,53 @@
 ## 1. 基础设施概览
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│               阿里云 ECS  47.254.73.23                    │
-│                                                         │
-│  ┌──────────────────┐    ┌──────────────────────────┐   │
-│  │  OpenClaw :8080  │    │   Python 工作流 :8000    │   │
-│  │                  │    │                          │   │
-│  │  kickstarter-    │───▶│  kickstarter-workflow/   │   │
-│  │  monitor         │    │  src/main.py             │   │
-│  │                  │    │                          │   │
-│  │  producthunt-    │───▶│  producthunt-workflow/   │   │
-│  │  monitor         │    │  src/main.py             │   │
-│  └──────────────────┘    └──────────────────────────┘   │
-│                                      │                   │
-│                                      ▼                   │
-│                          ┌──────────────────────┐        │
-│                          │  飞书多维表格 + 机器人  │        │
-│                          └──────────────────────┘        │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                   阿里云 ECS  47.254.73.23                        │
+│                                                                  │
+│  ┌──────────────────────┐    ┌──────────────────────────────┐    │
+│  │   OpenClaw :8080     │    │     Python 工作流 :8000      │    │
+│  │                      │    │                              │    │
+│  │  /api/*/trigger      │───▶│  fetch-*.js (增量)           │    │
+│  │  (增量, 每日定时)     │    │    ↓ raw JSON               │    │
+│  │                      │    │  src/main.py (diff + 同步)   │    │
+│  │  /api/*/full-sync    │───▶│                              │    │
+│  │  (全量, 手动触发)     │    │  run-full-sync.sh           │    │
+│  │                      │    │    ↓ fetch --full            │    │
+│  │                      │    │    ↓ diff + 同步             │    │
+│  └──────────────────────┘    └──────────────────────────────┘    │
+│                                          │                       │
+│                                          ▼                       │
+│                              ┌──────────────────────┐            │
+│                              │  飞书多维表格 + 机器人  │            │
+│                              └──────────────────────┘            │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+### 两种运行模式
+
+| 模式 | 触发方式 | 数据范围 | 适用场景 |
+|------|---------|---------|---------|
+| **增量** (默认) | 每日定时 cron / webhook trigger | 有筛选条件，最多 10-20 页 | 日常运行 |
+| **全量** | 手动 webhook full-sync / CLI `--full` | 无筛选条件，最多 50 页 | 首次部署、补数据 |
+
+### 增量模式筛选条件
 
 | 工作流 | 触发时间（UTC） | 北京时间 | 数据筛选条件 |
 |--------|--------------|---------|------------|
 | Kickstarter | 00:00 | 08:00 | 金额 ≥ $500K，2026-01-01 后发布 |
 | Product Hunt | 08:00 | 16:00 | 投票数 ≥ 100，最近 30 天内 |
+
+### 全量模式触发命令
+
+```bash
+# 一键全量同步 Kickstarter（发到 OpenClaw 即可，自动完成抓取→diff→入库→通知）
+curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"
+
+# 一键全量同步 Product Hunt
+curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"
+```
 
 ---
 
@@ -70,7 +94,19 @@
 
 ### 2.2 开通 API 权限
 
-两个应用均需开通相同权限（「权限管理」→「添加权限」）：
+两个应用均需开通相同权限。进入「开发者后台」→ 对应应用 →「权限管理」→ 搜索并勾选以下权限：
+
+| 权限代码 | 说明 | 用途 |
+|---------|------|------|
+| `bitable:app` | 查看、评论、编辑和管理多维表格 | **必须** — 覆盖多维表格所有读写操作 |
+| `bitable:app:readonly` | 查看多维表格 | 备选（如只需只读权限） |
+
+> **说明**：`bitable:app` 是组合权限，已包含 `bitable:base:read`、`bitable:record:read/write`、`bitable:table:read` 等细粒度权限。只需开通这一个即可。
+>
+> 如果你的飞书版本支持细粒度权限控制，也可以只开通以下最小集合：
+
+<details>
+<summary>细粒度权限列表（点击展开）</summary>
 
 | 权限代码 | 说明 |
 |---------|------|
@@ -79,45 +115,77 @@
 | `bitable:record:write` | 新增 / 编辑记录 |
 | `bitable:table:read` | 读取表格字段信息 |
 
-添加后提交审核，等待管理员审批通过。
+</details>
 
-### 2.3 创建多维表格
+添加后提交审核，等待管理员审批通过。发布应用后权限才会生效。
+
+### 2.3 飞书 API 接口说明
+
+项目使用的飞书多维表格 API 端点 ([官方文档](https://open.feishu.cn/document/server-docs/docs/bitable-v1/bitable-overview))：
+
+| 接口 | 方法 | 路径 | 限制 |
+|------|------|------|------|
+| 获取 Token | POST | `/auth/v3/tenant_access_token/internal` | 有效期 2 小时 |
+| 列出记录 | GET | `/bitable/v1/apps/:app_token/tables/:table_id/records` | page_size 上限 500，频率 20 次/秒 |
+| 批量新增 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_create` | **单次上限 500 条**，频率 50 次/秒 |
+| 批量更新 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_update` | **单次上限 500 条**，频率 50 次/秒 |
+
+**字段值格式要求**：
+
+| 飞书字段类型 | 传值格式 | 示例 |
+|-------------|---------|------|
+| 文本 | 字符串 | `"产品名称"` |
+| 数字 | 数字 | `500000` |
+| 日期 | **毫秒时间戳** | `1740787200000` (= 2025-03-01 00:00:00) |
+| 超链接 | `{"text": "显示文本", "link": "URL"}` | `{"text": "产品A", "link": "https://..."}` |
+
+> **注意**：日期字段不能传 ISO 字符串，必须传毫秒时间戳，否则写入失败。代码中 `_date_to_timestamp_ms()` 已自动处理转换。
+
+**并发写入注意事项**：
+
+- 同一数据表并发调用写入接口会出现冲突 (错误码 `1254291`)
+- 代码中已内置冲突重试 (最多 3 次) 和批次间 1 秒延迟
+
+### 2.4 创建多维表格
 
 **Kickstarter 表格**（命名：`Kickstarter 监控`）：
 
-| 序号 | 字段名 | 类型 |
-|-----|-------|------|
-| 1 | 产品名 | 文本 |
-| 2 | 国家 | 文本 |
-| 3 | 公司 | 文本 |
-| 4 | 标签 | 文本 |
-| 5 | 产品说明 | 文本 |
-| 6 | 众筹金额/美金 | **数字** |
-| 7 | 众筹人数 | **数字** |
-| 8 | 众筹开始时间 | **日期** |
-| 9 | 创始人 | 文本 |
-| 10 | 项目链接 | **超链接** |
-| 11 | 履历 | 文本 |
-| 12 | 融资历史 | 文本 |
+| 序号 | 字段名 | 类型 | 代码传值格式 |
+|-----|-------|------|------------|
+| 1 | 产品名 | 文本 | 字符串 |
+| 2 | 国家 | 文本 | 字符串 |
+| 3 | 公司 | 文本 | 字符串 |
+| 4 | 标签 | 文本 | 字符串 |
+| 5 | 产品说明 | 文本 | 字符串 |
+| 6 | 众筹金额/美金 | **数字** | 数字 |
+| 7 | 众筹人数 | **数字** | 数字 |
+| 8 | 众筹开始时间 | **日期** | **毫秒时间戳** (如 `1740787200000`) |
+| 9 | 创始人 | 文本 | 字符串 |
+| 10 | 项目链接 | **超链接** | `{"text": "产品名", "link": "URL"}` |
+| 11 | 履历 | 文本 | 字符串 |
+| 12 | 融资历史 | 文本 | 字符串 |
 
 **Product Hunt 表格**（命名：`Product Hunt 监控`）：
 
-| 序号 | 字段名 | 类型 |
-|-----|-------|------|
-| 1 | 产品名 | 文本 |
-| 2 | 标语 | 文本 |
-| 3 | 产品说明 | 文本 |
-| 4 | 投票数 | **数字** |
-| 5 | 评论数 | **数字** |
-| 6 | 发布日期 | **日期** |
-| 7 | 制作者 | 文本 |
-| 8 | 话题标签 | 文本 |
-| 9 | 产品链接 | **超链接** |
-| 10 | 产品图片 | 文本 |
-| 11 | 履历 | 文本 |
-| 12 | 融资历史 | 文本 |
+| 序号 | 字段名 | 类型 | 代码传值格式 |
+|-----|-------|------|------------|
+| 1 | 产品名 | 文本 | 字符串 |
+| 2 | 标语 | 文本 | 字符串 |
+| 3 | 产品说明 | 文本 | 字符串 |
+| 4 | 投票数 | **数字** | 数字 |
+| 5 | 评论数 | **数字** | 数字 |
+| 6 | 发布日期 | **日期** | **毫秒时间戳** (如 `1740787200000`) |
+| 7 | 制作者 | 文本 | 字符串 |
+| 8 | 话题标签 | 文本 | 字符串 |
+| 9 | 产品链接 | **超链接** | `{"text": "产品名", "link": "URL"}` |
+| 10 | 产品图片 | 文本 | 字符串 |
+| 11 | 履历 | 文本 | 字符串 |
+| 12 | 融资历史 | 文本 | 字符串 |
 
-> **重要**：字段名称和类型必须与上表完全一致，否则写入时会报 `field type mismatch`。
+> **重要**：
+> - 字段名称和类型必须与上表完全一致，否则写入时会报 `field type mismatch` (错误码 `1254015`)
+> - 日期字段必须传毫秒时间戳，不能传 ISO 字符串。代码中 `_date_to_timestamp_ms()` 已自动转换
+> - 超链接字段必须传 `{"text": ..., "link": ...}` 对象
 
 从表格 URL 获取 ID：
 ```
@@ -125,7 +193,7 @@ https://www.feishu.cn/base/BAsexxxxxxxxxxxxxxxxxxx?table=tblxxxxxxxxxxxxxxxxxxx
                              └────── base_id ──────┘       └──── table_id ────┘
 ```
 
-### 2.4 创建群机器人（可选）
+### 2.5 创建群机器人（可选）
 
 两个工作流各配一个机器人：
 
@@ -158,7 +226,7 @@ git clone <repository-url> /opt/cortexcrawl
 
 ## 4. 部署 Kickstarter 工作流
 
-### 4.1 上传 OpenClaw Skill
+### 4.1 上传 OpenClaw Skill 和全量同步脚本
 
 在**本地**执行：
 
@@ -167,9 +235,15 @@ cd /path/to/CortexCrawl
 
 ssh root@47.254.73.23 "mkdir -p /opt/openclaw/skills/kickstarter-monitor"
 
+# 上传 OpenClaw Skill 文件
 scp kickstarter-workflow/openclaw/skill-config.yaml \
     kickstarter-workflow/openclaw/fetch-kickstarter.js \
     root@47.254.73.23:/opt/openclaw/skills/kickstarter-monitor/
+
+# 上传全量同步脚本到工作流目录
+scp kickstarter-workflow/run-full-sync.sh \
+    root@47.254.73.23:/opt/cortexcrawl/kickstarter-workflow/
+ssh root@47.254.73.23 "chmod +x /opt/cortexcrawl/kickstarter-workflow/run-full-sync.sh"
 ```
 
 ### 4.2 安装 Python 依赖
@@ -205,14 +279,20 @@ OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
 
 ## 5. 部署 Product Hunt 工作流
 
-### 5.1 上传 OpenClaw Skill
+### 5.1 上传 OpenClaw Skill 和全量同步脚本
 
 ```bash
 ssh root@47.254.73.23 "mkdir -p /opt/openclaw/skills/producthunt-monitor"
 
+# 上传 OpenClaw Skill 文件
 scp producthunt-workflow/openclaw/skill-config.yaml \
     producthunt-workflow/openclaw/fetch-producthunt.js \
     root@47.254.73.23:/opt/openclaw/skills/producthunt-monitor/
+
+# 上传全量同步脚本到工作流目录
+scp producthunt-workflow/run-full-sync.sh \
+    root@47.254.73.23:/opt/cortexcrawl/producthunt-workflow/
+ssh root@47.254.73.23 "chmod +x /opt/cortexcrawl/producthunt-workflow/run-full-sync.sh"
 ```
 
 ### 5.2 安装 Python 依赖
@@ -291,6 +371,51 @@ crontab -e
 ```bash
 crontab -l
 ```
+
+---
+
+## 6.1 全量同步 (首次部署或手动补数据)
+
+首次部署后，需要做一次全量拉取把历史数据灌入飞书表格。之后可以随时通过 OpenClaw webhook 手动触发。
+
+### 方式一：通过 OpenClaw webhook 触发 (推荐)
+
+```bash
+# Kickstarter 全量同步
+curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+
+# Product Hunt 全量同步
+curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+```
+
+发送后 OpenClaw 会自动执行完整流水线：全量抓取 → 对比 diff → 同步新增/更新到飞书 → 发送通知卡片。
+
+### 方式二：在服务器上直接运行脚本
+
+```bash
+# Kickstarter
+cd /opt/cortexcrawl/kickstarter-workflow
+./run-full-sync.sh                   # 全量同步
+./run-full-sync.sh --test            # 仅看 diff，不写入飞书
+
+# Product Hunt
+cd /opt/cortexcrawl/producthunt-workflow
+./run-full-sync.sh
+./run-full-sync.sh --test
+```
+
+### 方式三：通过 Python 直接运行
+
+```bash
+cd /opt/cortexcrawl/kickstarter-workflow
+source venv/bin/activate
+python src/main.py --full            # 全量拉取 + 同步
+python src/main.py --full --test     # 全量拉取 + 仅看 diff
+```
+
+> **注意**: 全量拉取会抓取最多 50 页数据，耗时较长 (约 5-10 分钟)，超时设置为 10 分钟。
 
 ---
 
@@ -396,12 +521,28 @@ python src/main.py --test
 # 预期：输出 JSON 结果，success: true，无飞书写入
 ```
 
-### 第五步：完整端到端验证（真实写入）
+### 第五步：全量同步验证（首次部署必做）
+
+首次部署时飞书表格为空，需要通过全量同步灌入历史数据。先用 `--test` 验证 diff 逻辑，再正式写入。
 
 ```bash
-# Kickstarter 完整运行
+# ── Kickstarter ──
 cd /opt/cortexcrawl/kickstarter-workflow && source venv/bin/activate
-python src/main.py
+
+# 5a. 先试跑 (全量抓取 + diff，但不写入飞书)
+python src/main.py --full --test
+# 预期: success: true，可以看到 new_count > 0
+
+# 5b. 正式全量同步 (写入飞书 + 发通知)
+python src/main.py --full
+```
+
+```bash
+# ── Product Hunt ──
+cd /opt/cortexcrawl/producthunt-workflow && source venv/bin/activate
+
+python src/main.py --full --test     # 先试跑
+python src/main.py --full            # 正式同步
 ```
 
 **预期 JSON 输出**：
@@ -409,18 +550,14 @@ python src/main.py
 {
   "success": true,
   "message": "工作流执行成功",
-  "new_count": 5,
+  "new_count": 120,
   "updated_count": 0,
   "unchanged_count": 0,
-  "duration_seconds": 8.3
+  "duration_seconds": 85.3
 }
 ```
 
-```bash
-# Product Hunt 完整运行
-cd /opt/cortexcrawl/producthunt-workflow && source venv/bin/activate
-python src/main.py
-```
+> 全量模式首次运行 `new_count` 会比较大（所有数据都是新增），耗时约 2-10 分钟。
 
 验证飞书表格是否有新数据：
 ```bash
@@ -435,7 +572,44 @@ if records:
 "
 ```
 
-### 第六步：验证飞书通知（如已配置 Webhook）
+### 第六步：验证 OpenClaw 全量同步 webhook
+
+确认通过 OpenClaw 发消息也能触发全量同步：
+
+```bash
+# 触发 Kickstarter 全量同步
+curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+# 预期: OpenClaw 返回 200，后台自动执行 run-full-sync.sh
+
+# 触发 Product Hunt 全量同步
+curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+```
+
+查看执行日志：
+```bash
+tail -f /var/log/kickstarter-monitor.log
+# 预期: 看到 "全量模式" 字样，以及 diff 统计 (new/updated/unchanged)
+```
+
+### 第七步：增量模式端到端验证
+
+全量同步完成后，验证日常增量模式是否正常（此时大部分数据已存在，应该看到 unchanged 为主）：
+
+```bash
+# Kickstarter 增量运行
+cd /opt/cortexcrawl/kickstarter-workflow && source venv/bin/activate
+python src/main.py
+
+# Product Hunt 增量运行
+cd /opt/cortexcrawl/producthunt-workflow && source venv/bin/activate
+python src/main.py
+```
+
+**预期**：`updated_count` 可能有几条（数值变化），`new_count` 应该为 0 或很少。
+
+### 第八步：验证飞书通知（如已配置 Webhook）
 
 工作流运行后，检查目标群聊是否收到卡片消息。如未收到：
 
@@ -451,7 +625,7 @@ print(r.json())
 "
 ```
 
-### 第七步：验证定时任务
+### 第九步：验证定时任务
 
 ```bash
 # 检查 crontab 是否配置
@@ -479,6 +653,7 @@ tail -5 /var/log/producthunt-monitor.log
 ### 常用命令
 
 ```bash
+# ── 日志 ──
 # 实时查看所有日志
 tail -f /var/log/kickstarter-monitor.log /var/log/producthunt-monitor.log
 
@@ -486,7 +661,26 @@ tail -f /var/log/kickstarter-monitor.log /var/log/producthunt-monitor.log
 grep -i "error\|exception" /var/log/kickstarter-monitor.log /var/log/producthunt-monitor.log \
   | grep $(date +%Y-%m-%d)
 
-# 手动重跑（指定已有数据文件）
+# ── 手动触发 (通过 OpenClaw webhook，推荐) ──
+# 增量抓取 (仅抓取，不处理)
+curl -X POST http://localhost:8080/api/kickstarter/trigger \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+
+# 全量同步 (抓取 + diff + 入库 + 通知，一步到位)
+curl -X POST http://localhost:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+curl -X POST http://localhost:8080/api/producthunt/full-sync \
+  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+
+# ── 手动触发 (在服务器上直接运行) ──
+# 全量同步
+cd /opt/cortexcrawl/kickstarter-workflow && ./run-full-sync.sh
+cd /opt/cortexcrawl/producthunt-workflow && ./run-full-sync.sh
+
+# 全量同步 (仅看 diff，不写入飞书)
+cd /opt/cortexcrawl/kickstarter-workflow && ./run-full-sync.sh --test
+
+# 增量模式重跑（使用已有数据文件）
 cd /opt/cortexcrawl/kickstarter-workflow && source venv/bin/activate
 python src/main.py --data-path /data/kickstarter/raw_projects.json
 ```
@@ -495,12 +689,22 @@ python src/main.py --data-path /data/kickstarter/raw_projects.json
 
 | 现象 | 排查步骤 |
 |------|---------|
+| **飞书连接** | |
 | 飞书 `401` | 检查 `.env` 中 App ID / Secret 是否正确；确认应用权限已审批 |
-| `field type mismatch` | 飞书表格字段类型与上表不符，检查数字/日期/超链接字段 |
+| 飞书 `404` | base_id / table_id 填错，从表格 URL 重新获取 |
+| 错误码 `1254015` field type mismatch | 飞书表格字段类型与代码不符。**日期**必须传毫秒时间戳，**超链接**必须传 `{"text":..,"link":..}` 对象 |
+| 错误码 `1254045` 字段名不存在 | 飞书表格中缺少代码引用的字段，检查字段名拼写是否完全一致 |
+| 错误码 `1254104` 单次超限 | 单次批量操作超过 500 条 (代码已按 500 分批，正常不会触发) |
+| 错误码 `1254291` 写入冲突 | 同一数据表并发写入冲突，代码已内置自动重试。频繁出现则检查是否有多个进程同时写 |
+| **数据抓取** | |
 | 数据文件不存在 | `docker logs openclaw` 查看 Skill 是否报错；手动触发验证 |
 | 工作流无新数据 | 确认抓取文件 `count > 0`；检查筛选阈值是否过高 |
+| **定时/触发** | |
 | 定时任务未执行 | `crontab -l` 确认配置；`grep CRON /var/log/syslog` 查看调度日志 |
 | OpenClaw 重启后 Skill 丢失 | 重新 `scp` 上传 Skill 文件并 `docker-compose restart` |
+| full-sync webhook 返回 404 | 确认 skill-config.yaml 包含 full-sync trigger 并已重启 OpenClaw |
+| full-sync 超时 | 全量模式最多 50 页，耗时约 5-10 分钟；检查网络或调大 `timeout` |
+| 全量同步后 `new_count=0` | 说明所有数据已存在，检查 `updated_count` 是否有数值更新 |
 
 ### 更新部署
 
@@ -514,6 +718,10 @@ for wf in kickstarter-workflow producthunt-workflow; do
   pip install -r requirements.txt
   deactivate
 done
+
+# 确保全量同步脚本可执行
+chmod +x /opt/cortexcrawl/kickstarter-workflow/run-full-sync.sh
+chmod +x /opt/cortexcrawl/producthunt-workflow/run-full-sync.sh
 
 # 如果 JS Skill 有变更，重新上传
 scp /opt/cortexcrawl/kickstarter-workflow/openclaw/* \
