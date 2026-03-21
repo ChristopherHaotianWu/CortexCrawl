@@ -4,8 +4,8 @@
 
 API 参考: https://open.feishu.cn/document/server-docs/docs/bitable-v1/bitable-overview
 - 列出记录: GET /bitable/v1/apps/:app_token/tables/:table_id/records (page_size 上限 500)
-- 批量新增: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_create (上限 1000 条/次)
-- 批量更新: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_update (上限 1000 条/次)
+- 批量新增: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_create (上限 500 条/次)
+- 批量更新: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_update (上限 500 条/次)
 - Token:    POST /auth/v3/tenant_access_token/internal (有效期 2 小时)
 """
 import time
@@ -174,7 +174,7 @@ class FeishuClient:
         批量创建记录
 
         API: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_create
-        - 单次上限 1000 条
+        - 单次上限 500 条
         - 频率限制 50 次/秒
         - 同一数据表并发写入可能冲突 (错误码 1254291)
 
@@ -186,7 +186,7 @@ class FeishuClient:
         """
         url = f"{self.BASE_URL}/bitable/v1/apps/{self.config.base_id}/tables/{self.config.table_id}/records/batch_create"
 
-        batch_size = 1000
+        batch_size = 500
         created_records = []
 
         for i in range(0, len(records), batch_size):
@@ -220,7 +220,7 @@ class FeishuClient:
         批量更新记录
 
         API: POST /bitable/v1/apps/:app_token/tables/:table_id/records/batch_update
-        - 单次上限 1000 条
+        - 单次上限 500 条
         - 请求体: {"records": [{"record_id": "xxx", "fields": {...}}, ...]}
 
         Args:
@@ -232,7 +232,7 @@ class FeishuClient:
         """
         url = f"{self.BASE_URL}/bitable/v1/apps/{self.config.base_id}/tables/{self.config.table_id}/records/batch_update"
 
-        batch_size = 1000
+        batch_size = 500
         updated_records = []
 
         for i in range(0, len(records), batch_size):

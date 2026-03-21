@@ -94,7 +94,19 @@ curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
 
 ### 2.2 开通 API 权限
 
-两个应用均需开通相同权限（「权限管理」→「添加权限」）：
+两个应用均需开通相同权限。进入「开发者后台」→ 对应应用 →「权限管理」→ 搜索并勾选以下权限：
+
+| 权限代码 | 说明 | 用途 |
+|---------|------|------|
+| `bitable:app` | 查看、评论、编辑和管理多维表格 | **必须** — 覆盖多维表格所有读写操作 |
+| `bitable:app:readonly` | 查看多维表格 | 备选（如只需只读权限） |
+
+> **说明**：`bitable:app` 是组合权限，已包含 `bitable:base:read`、`bitable:record:read/write`、`bitable:table:read` 等细粒度权限。只需开通这一个即可。
+>
+> 如果你的飞书版本支持细粒度权限控制，也可以只开通以下最小集合：
+
+<details>
+<summary>细粒度权限列表（点击展开）</summary>
 
 | 权限代码 | 说明 |
 |---------|------|
@@ -103,7 +115,9 @@ curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
 | `bitable:record:write` | 新增 / 编辑记录 |
 | `bitable:table:read` | 读取表格字段信息 |
 
-添加后提交审核，等待管理员审批通过。
+</details>
+
+添加后提交审核，等待管理员审批通过。发布应用后权限才会生效。
 
 ### 2.3 飞书 API 接口说明
 
@@ -113,8 +127,8 @@ curl -X POST http://47.254.73.23:8080/api/producthunt/full-sync \
 |------|------|------|------|
 | 获取 Token | POST | `/auth/v3/tenant_access_token/internal` | 有效期 2 小时 |
 | 列出记录 | GET | `/bitable/v1/apps/:app_token/tables/:table_id/records` | page_size 上限 500，频率 20 次/秒 |
-| 批量新增 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_create` | **单次上限 1000 条**，频率 50 次/秒 |
-| 批量更新 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_update` | **单次上限 1000 条**，频率 50 次/秒 |
+| 批量新增 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_create` | **单次上限 500 条**，频率 50 次/秒 |
+| 批量更新 | POST | `/bitable/v1/apps/:app_token/tables/:table_id/records/batch_update` | **单次上限 500 条**，频率 50 次/秒 |
 
 **字段值格式要求**：
 
@@ -680,7 +694,7 @@ python src/main.py --data-path /data/kickstarter/raw_projects.json
 | 飞书 `404` | base_id / table_id 填错，从表格 URL 重新获取 |
 | 错误码 `1254015` field type mismatch | 飞书表格字段类型与代码不符。**日期**必须传毫秒时间戳，**超链接**必须传 `{"text":..,"link":..}` 对象 |
 | 错误码 `1254045` 字段名不存在 | 飞书表格中缺少代码引用的字段，检查字段名拼写是否完全一致 |
-| 错误码 `1254104` 单次超限 | 单次批量操作超过 1000 条 (代码已按 1000 分批，正常不会触发) |
+| 错误码 `1254104` 单次超限 | 单次批量操作超过 500 条 (代码已按 500 分批，正常不会触发) |
 | 错误码 `1254291` 写入冲突 | 同一数据表并发写入冲突，代码已内置自动重试。频繁出现则检查是否有多个进程同时写 |
 | **数据抓取** | |
 | 数据文件不存在 | `docker logs openclaw` 查看 Skill 是否报错；手动触发验证 |
