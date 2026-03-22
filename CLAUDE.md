@@ -75,6 +75,14 @@ Both workflows use the same structure (see `.env.example` in each):
 - `FEISHU_WEBHOOK_URL`: Bot notification endpoint
 - Workflow-specific thresholds: `MIN_FUNDING_AMOUNT`, `MIN_LAUNCH_DATE` (Kickstarter) or `PRODUCT_HUNT_API_TOKEN` (Product Hunt)
 
+## Document Sync
+
+`scripts/sync_deployment_to_feishu.py` syncs DEPLOYMENT.md to a Feishu wiki page via the docx API. Configured as a Claude Code PostToolUse hook — auto-runs when DEPLOYMENT.md is edited.
+
+- Wiki page: https://my.feishu.cn/wiki/SYnfwn6ZDiv8xmka7ttcTmbvnMb
+- Credentials in root `.env`: `FEISHU_DOC_APP_ID`, `FEISHU_DOC_APP_SECRET`, `FEISHU_WIKI_URL`
+- Manual run: `python3 scripts/sync_deployment_to_feishu.py`
+
 ## Deployment
 
 - Server: Alibaba Cloud ECS at `47.254.73.23`
