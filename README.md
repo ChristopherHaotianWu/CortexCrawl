@@ -1,115 +1,83 @@
 # CortexCrawl
 
-基于 OpenClaw API 的数据采集与分析服务
+数据采集流水线，监控众筹和产品发现平台，自动同步到飞书多维表格并发送机器人通知。
 
-## 项目简介
+## 工作流
 
-CortexCrawl 是一个部署在阿里云上的数据采集服务，通过 OpenClaw API 实现智能化的数据抓取和处理能力。
+| 工作流 | 数据源 | 筛选条件 | 触发时间 (UTC) |
+|--------|--------|---------|---------------|
+| **kickstarter-workflow** | Kickstarter | 金额 ≥ $500K，2026-01-01 后 | 每日 00:00 |
+| **producthunt-workflow** | Product Hunt | 投票数 ≥ 100，最近 30 天 | 每日 08:00 |
 
-## 部署信息
+## 数据流
 
-- **服务器地址**: `47.254.73.23`
-- **服务商**: 阿里云
-- **部署方式**: 云服务器 ECS
+```
+GraphQL APIs (Kickstarter / Product Hunt)
+    → OpenClaw Skill (JS) — 每日定时 / webhook 触发
+    → Raw JSON (/data/*/raw_*.json)
+    → Python 工作流 (src/main.py) — 去重 + diff
+    → 飞书多维表格 + 机器人通知
+```
 
-## 环境配置
-
-### 1. 配置 OpenClaw Token
-
-> ⚠️ **安全提示**: 请勿将 Token 直接提交到代码仓库
-
-创建 `.env` 文件：
+## 快速开始
 
 ```bash
-# 复制环境变量模板
-cp .env.example .env
+cd kickstarter-workflow  # 或 producthunt-workflow
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env     # 填入飞书凭证
 
-# 编辑 .env 文件，填入你的 Token
-nano .env
+# 增量运行 (使用已有数据文件)
+python src/main.py
+
+# 全量同步 (首次部署 / 补数据)
+python src/main.py --full
+
+# 测试模式 (不写入飞书)
+python src/main.py --test
 ```
 
-`.env` 文件内容：
-
-```env
-OPENCLAW_TOKEN=your_openclaw_token_here
-SERVER_IP=47.254.73.23
-```
-
-### 2. 安装依赖
+## 远程触发
 
 ```bash
-# 使用 uv 安装依赖
-uv pip install -r requirements.txt
-```
+# 增量抓取
+curl -X POST http://47.254.73.23:8080/api/kickstarter/trigger \
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"
 
-### 3. 运行服务
-
-```bash
-# 本地开发
-python main.py
-
-# 或生产部署
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-## 连接到阿里云服务器
-
-```bash
-# SSH 连接到服务器
-ssh root@47.254.73.23
-
-# 或使用密钥
-ssh -i ~/.ssh/your_key.pem root@47.254.73.23
-```
-
-## API 使用示例
-
-```python
-import requests
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
-token = os.getenv("OPENCLAW_TOKEN")
-base_url = f"http://{os.getenv('SERVER_IP')}:8000"
-
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json"
-}
-
-# 示例：发起爬虫任务
-response = requests.post(
-    f"{base_url}/api/crawl",
-    headers=headers,
-    json={"target": "example.com"}
-)
-
-print(response.json())
+# 全量同步 (一键: 抓取 → diff → 入库 → 通知)
+curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"
 ```
 
 ## 项目结构
 
 ```
-.
-├── README.md           # 项目说明文档
-├── .env.example        # 环境变量模板
-├── .env                # 本地环境变量（不提交到 git）
-├── requirements.txt    # Python 依赖
-├── main.py            # 主程序入口
-└── src/               # 源代码目录
-    ├── __init__.py
-    ├── crawler.py     # 爬虫核心模块
-    └── api.py         # API 接口模块
+CortexCrawl/
+├── kickstarter-workflow/          # Kickstarter 工作流
+│   ├── openclaw/                  # OpenClaw JS 抓取脚本
+│   │   ├── skill-config.yaml
+│   │   └── fetch-kickstarter.js
+│   ├── src/                       # Python 处理逻辑
+│   │   ├── config.py              # 配置 + 字段映射
+│   │   ├── data_processor.py      # 去重 + diff 逻辑
+│   │   ├── feishu_client.py       # 飞书 API 客户端
+│   │   └── main.py                # 入口
+│   ├── run-full-sync.sh           # 全量同步脚本
+│   └── requirements.txt
+├── producthunt-workflow/          # Product Hunt 工作流 (同构)
+├── scripts/
+│   └── sync_deployment_to_feishu.py  # DEPLOYMENT.md → 飞书文档同步
+├── DEPLOYMENT.md                  # 完整部署手册
+└── CLAUDE.md                      # Claude Code 指引
 ```
 
-## 注意事项
+## 文档
 
-1. **安全**: 请确保 `.env` 文件已添加到 `.gitignore` 中
-2. **防火墙**: 阿里云安全组需要开放相应端口（如 8000）
-3. **Token 管理**: 定期更换 OpenClaw Token 以保证安全
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — 完整部署手册 (飞书平台配置、服务器部署、定时任务、故障排查)
+- **[飞书在线版](https://my.feishu.cn/wiki/SYnfwn6ZDiv8xmka7ttcTmbvnMb)** — DEPLOYMENT.md 自动同步到飞书云文档
 
-## 联系方式
+## 部署
 
-如有问题，请提交 Issue 或联系项目维护者。
+- 服务器: 阿里云 ECS `47.254.73.23`
+- OpenClaw: `:8080` | Python: `:8000`
+- 详见 [DEPLOYMENT.md](DEPLOYMENT.md)
