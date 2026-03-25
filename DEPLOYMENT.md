@@ -205,21 +205,55 @@ https://www.feishu.cn/base/BAsexxxxxxxxxxxxxxxxxxx?table=tblxxxxxxxxxxxxxxxxxxx
 
 ## 3. 服务器环境准备
 
+### 服务器信息
+
+| 项目 | 值 |
+|------|------|
+| 系统 | Alibaba Cloud Linux 3 (RHEL 8 兼容) |
+| IP | 47.254.73.23 |
+| OpenClaw | Node.js 直接运行 (`/opt/openclaw/dist/index.js`)，非 Docker |
+| Python | 需要 3.9+，系统自带 3.6.8 不满足要求 |
+
+### 3.1 安装 Python 3.11（系统自带 3.6 太旧）
+
 ```bash
-# SSH 登录服务器
 ssh root@47.254.73.23
 
-# 确认 Python 版本
-python3 --version   # 需要 >= 3.9
+# 安装编译依赖
+yum install -y gcc openssl-devel bzip2-devel libffi-devel zlib-devel
 
-# 确认 Docker 运行
-docker ps | grep openclaw
+# 下载并编译 Python 3.11（altinstall 不覆盖系统 python3）
+cd /tmp
+curl -O https://www.python.org/ftp/python/3.11.9/Python-3.11.9.tgz
+tar xzf Python-3.11.9.tgz
+cd Python-3.11.9
+./configure --enable-optimizations --prefix=/usr/local
+make -j$(nproc)
+make altinstall
 
+# 验证
+python3.11 --version   # Python 3.11.9
+```
+
+### 3.2 确认 OpenClaw 运行
+
+```bash
+# OpenClaw 以 Node.js 进程运行（非 Docker）
+ps aux | grep openclaw
+# 预期: /usr/bin/node /opt/openclaw/dist/index.js gateway
+
+# 确认端口
+curl -s http://localhost:8080/health
+```
+
+### 3.3 创建目录和拉取代码
+
+```bash
 # 创建数据目录
 mkdir -p /data/kickstarter /data/producthunt
 
 # 拉取代码（首次）
-git clone <repository-url> /opt/cortexcrawl
+git clone https://github.com/ChristopherHaotianWu/CortexCrawl.git /opt/cortexcrawl
 ```
 
 ---
@@ -251,7 +285,7 @@ ssh root@47.254.73.23 "chmod +x /opt/cortexcrawl/kickstarter-workflow/run-full-s
 ```bash
 cd /opt/cortexcrawl/kickstarter-workflow
 
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -300,7 +334,7 @@ ssh root@47.254.73.23 "chmod +x /opt/cortexcrawl/producthunt-workflow/run-full-s
 ```bash
 cd /opt/cortexcrawl/producthunt-workflow
 
-python3 -m venv venv
+python3.11 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
@@ -328,12 +362,18 @@ PRODUCT_HUNT_API_TOKEN=your_token_here      # 可选，用于提升请求配额
 
 ### 5.4 重启 OpenClaw（加载两个新 Skill）
 
+OpenClaw 以 Node.js 进程运行（非 Docker），重启方式：
+
 ```bash
-cd /opt/openclaw
-docker-compose restart
+# 找到进程并重启
+ps aux | grep openclaw
+kill <PID>
+
+# 重新启动（以 admin 用户运行）
+su - admin -c "cd /opt/openclaw && nohup node dist/index.js gateway > /var/log/openclaw.log 2>&1 &"
 
 # 确认两个 Skill 都已加载
-docker logs --tail 100 openclaw | grep -E "kickstarter|producthunt"
+tail -100 /var/log/openclaw.log | grep -E "kickstarter|producthunt"
 ```
 
 ---
@@ -502,7 +542,7 @@ Product Hunt: 87 个产品，抓取时间 2026-03-20T16:00:08.123Z
 
 **如果文件不存在**：查看 OpenClaw 日志排查
 ```bash
-docker logs --tail 200 openclaw | grep -E "kickstarter|producthunt|error|ERROR"
+tail -200 /var/log/openclaw.log | grep -E "kickstarter|producthunt|error|ERROR"
 ```
 
 ### 第四步：验证 Python 工作流（测试模式）
@@ -648,7 +688,7 @@ tail -5 /var/log/producthunt-monitor.log
 | Kickstarter 工作流日志 | `/var/log/kickstarter-monitor.log` |
 | Product Hunt 触发日志 | `/var/log/ph-trigger.log` |
 | Product Hunt 工作流日志 | `/var/log/producthunt-monitor.log` |
-| OpenClaw 日志 | `docker logs openclaw` |
+| OpenClaw 日志 | `/var/log/openclaw.log` |
 
 ### 常用命令
 
@@ -697,11 +737,11 @@ python src/main.py --data-path /data/kickstarter/raw_projects.json
 | 错误码 `1254104` 单次超限 | 单次批量操作超过 500 条 (代码已按 500 分批，正常不会触发) |
 | 错误码 `1254291` 写入冲突 | 同一数据表并发写入冲突，代码已内置自动重试。频繁出现则检查是否有多个进程同时写 |
 | **数据抓取** | |
-| 数据文件不存在 | `docker logs openclaw` 查看 Skill 是否报错；手动触发验证 |
+| 数据文件不存在 | `tail -200 /var/log/openclaw.log` 查看 Skill 是否报错；手动触发验证 |
 | 工作流无新数据 | 确认抓取文件 `count > 0`；检查筛选阈值是否过高 |
 | **定时/触发** | |
 | 定时任务未执行 | `crontab -l` 确认配置；`grep CRON /var/log/syslog` 查看调度日志 |
-| OpenClaw 重启后 Skill 丢失 | 重新 `scp` 上传 Skill 文件并 `docker-compose restart` |
+| OpenClaw 重启后 Skill 丢失 | 重新 `scp` 上传 Skill 文件并重启 Node.js 进程 |
 | full-sync webhook 返回 404 | 确认 skill-config.yaml 包含 full-sync trigger 并已重启 OpenClaw |
 | full-sync 超时 | 全量模式最多 50 页，耗时约 5-10 分钟；检查网络或调大 `timeout` |
 | 全量同步后 `new_count=0` | 说明所有数据已存在，检查 `updated_count` 是否有数值更新 |
@@ -723,11 +763,13 @@ done
 chmod +x /opt/cortexcrawl/kickstarter-workflow/run-full-sync.sh
 chmod +x /opt/cortexcrawl/producthunt-workflow/run-full-sync.sh
 
-# 如果 JS Skill 有变更，重新上传
-scp /opt/cortexcrawl/kickstarter-workflow/openclaw/* \
-    root@47.254.73.23:/opt/openclaw/skills/kickstarter-monitor/
-scp /opt/cortexcrawl/producthunt-workflow/openclaw/* \
-    root@47.254.73.23:/opt/openclaw/skills/producthunt-monitor/
+# 如果 JS Skill 有变更，复制到 OpenClaw 目录
+cp /opt/cortexcrawl/kickstarter-workflow/openclaw/* \
+   /opt/openclaw/skills/kickstarter-monitor/
+cp /opt/cortexcrawl/producthunt-workflow/openclaw/* \
+   /opt/openclaw/skills/producthunt-monitor/
 
-cd /opt/openclaw && docker-compose restart
+# 重启 OpenClaw (Node.js 进程)
+pkill -f "openclaw/dist/index.js" || true
+su - admin -c "cd /opt/openclaw && nohup node dist/index.js gateway > /var/log/openclaw.log 2>&1 &"
 ```

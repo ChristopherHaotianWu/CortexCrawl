@@ -85,8 +85,9 @@ Both workflows use the same structure (see `.env.example` in each):
 
 ## Deployment
 
-- Server: Alibaba Cloud ECS at `47.254.73.23`
-- OpenClaw runs on port 8080, Python services on port 8000
+- Server: Alibaba Cloud ECS at `47.254.73.23` (Alibaba Cloud Linux 3, RHEL 8 兼容)
+- OpenClaw: Node.js 直接运行 (`/opt/openclaw/dist/index.js`)，非 Docker，端口 8080
+- Python: 需使用 `python3.11`（系统自带 3.6 太旧），venv 创建用 `python3.11 -m venv venv`
 - Kickstarter skill triggers at UTC 00:00; Product Hunt at UTC 08:00
 - Raw data files land at `/data/kickstarter/raw_projects.json` and `/data/producthunt/raw_products.json`
 - Cron can also call `python src/main.py` independently if the raw file was already written

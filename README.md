@@ -78,6 +78,7 @@ CortexCrawl/
 
 ## 部署
 
-- 服务器: 阿里云 ECS `47.254.73.23`
-- OpenClaw: `:8080` | Python: `:8000`
+- 服务器: 阿里云 ECS `47.254.73.23` (Alibaba Cloud Linux 3)
+- OpenClaw: Node.js 直接运行 `:8080` (非 Docker)
+- Python: 需 3.9+，服务器用 `python3.11`
 - 详见 [DEPLOYMENT.md](DEPLOYMENT.md)
