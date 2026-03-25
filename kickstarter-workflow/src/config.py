@@ -40,13 +40,13 @@ class FeishuConfig:
 class OpenClawConfig:
     """OpenClaw 配置"""
     token: str = ""
-    base_url: str = "http://47.254.73.23:8080/api"
+    base_url: str = "http://localhost:15970"
     
     @classmethod
     def from_env(cls) -> "OpenClawConfig":
         return cls(
             token=os.getenv("OPENCLAW_TOKEN", ""),
-            base_url=os.getenv("OPENCLAW_BASE_URL", "http://47.254.73.23:8080/api")
+            base_url=os.getenv("OPENCLAW_BASE_URL", "http://localhost:15970")
         )
 
 
