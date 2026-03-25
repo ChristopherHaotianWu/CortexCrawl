@@ -143,7 +143,7 @@ nano /opt/openclaw/.env
 追加以下内容（替换占位符为真实值）：
 
 ```env
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=$OPENCLAW_TOKEN
 ```
 
 ### 3.3 重启 OpenClaw
@@ -209,7 +209,7 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xx
 
 # ---- OpenClaw（可选）----
 OPENCLAW_BASE_URL=http://47.254.73.23:8080/api
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=$OPENCLAW_TOKEN
 ```
 
 ### 4.4 创建数据目录
@@ -233,7 +233,7 @@ crontab -e
 ```cron
 # Step 1: UTC 00:00 触发 OpenClaw 抓取（北京时间 08:00）
 0 0 * * * curl -s -X POST http://localhost:8080/api/kickstarter/trigger \
-  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9" >> /var/log/kickstarter-trigger.log 2>&1
+  -H "Authorization: Bearer $OPENCLAW_TOKEN" >> /var/log/kickstarter-trigger.log 2>&1
 
 # Step 2: UTC 00:05 执行 Python 工作流（等待抓取完成）
 5 0 * * * cd /opt/cortexcrawl/kickstarter-workflow && \
@@ -278,7 +278,7 @@ print(f'飞书连接成功，当前共 {len(records)} 条记录')
 
 ```bash
 curl -X POST http://47.254.73.23:8080/api/kickstarter/trigger \
-  -H "Authorization: Bearer d171c5fce114f7c6a1c13f5ac424b3c9"
+  -H "Authorization: Bearer $OPENCLAW_TOKEN"
 ```
 
 等待约 1 分钟后，确认数据文件已生成：

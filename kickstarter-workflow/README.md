@@ -329,7 +329,7 @@ nano /opt/openclaw/.env
 
 ```env
 # OpenClaw Token
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=your_openclaw_token_here
 
 # 飞书配置
 FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
@@ -463,7 +463,7 @@ FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xx
 # ------------------------------------------
 # 用于本地测试连接 OpenClaw 服务器
 OPENCLAW_BASE_URL=http://47.254.73.23:8080/api
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=your_openclaw_token_here
 ```
 
 #### 3.5 测试运行
