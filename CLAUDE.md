@@ -29,11 +29,10 @@ python src/main.py --full                   # full pipeline
 ./run-full-sync.sh                          # shell script version
 ./run-full-sync.sh --test                   # full fetch + diff only (no writes)
 
-# Trigger via OpenClaw webhook (on server)
-curl -X POST http://47.254.73.23:8080/api/kickstarter/trigger \
-  -H "Authorization: Bearer $OPENCLAW_TOKEN"           # incremental
-curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
-  -H "Authorization: Bearer $OPENCLAW_TOKEN"           # full sync
+# Manual trigger on server
+ssh root@47.254.73.23
+cd /opt/cortexcrawl/kickstarter-workflow && ./run-full-sync.sh       # full sync
+cd /opt/cortexcrawl/producthunt-workflow && ./run-full-sync.sh       # full sync
 ```
 
 ## Architecture
@@ -41,7 +40,7 @@ curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
 ### Data Flow
 ```
 GraphQL APIs (Kickstarter / Product Hunt)
-    → OpenClaw Skill (JS) — daily schedule or webhook trigger
+    → JS fetcher (fetch-*.js) — cron schedule or manual trigger
     → Raw JSON file (/data/*/raw_*.json on server)
     → Python workflow (src/main.py)
     → Feishu Bitable (multi-dimensional table) + Webhook notification
@@ -51,7 +50,7 @@ GraphQL APIs (Kickstarter / Product Hunt)
 
 **`openclaw/`** — Node.js scripts run inside OpenClaw server
 - `skill-config.yaml`: defines trigger schedule, pipeline steps, output destinations
-- `fetch-*.js`: queries GraphQL APIs, filters data, writes raw JSON to disk, then POSTs to Python webhook
+- `fetch-*.js`: queries GraphQL APIs, filters data, writes raw JSON to disk
 
 **`src/config.py`** — Dataclasses for all config: `FeishuConfig`, `OpenClawConfig`, workflow-specific config (thresholds, field mappings). `TABLE_FIELDS` dict maps raw data field names to Feishu column names.
 
@@ -61,7 +60,7 @@ GraphQL APIs (Kickstarter / Product Hunt)
 
 **`src/main.py`** — Orchestrates 5 steps: load raw data → fetch Feishu records → process (dedup+update) → write to Feishu → send notification card. Supports `--full` flag for full data pull (calls JS fetcher automatically). Outputs JSON result summary to stdout.
 
-**`run-full-sync.sh`** — One-click full sync script: runs JS fetcher in full mode → Python processor (diff + sync). Can be triggered via OpenClaw webhook at `/api/*/full-sync`.
+**`run-full-sync.sh`** — One-click full sync script: runs JS fetcher in full mode → Python processor (diff + sync).
 
 ### Deduplication Logic
 Records are matched by `project_url` / `product_url` as the dedup key. When a URL already exists in Feishu, only changed numeric fields are updated; manual research fields are left untouched. Missing items in new data are kept (archive behavior, no deletes).
@@ -86,7 +85,7 @@ Both workflows use the same structure (see `.env.example` in each):
 ## Deployment
 
 - Server: Alibaba Cloud ECS at `47.254.73.23` (Alibaba Cloud Linux 3, RHEL 8 兼容)
-- OpenClaw: Node.js 直接运行 (`/opt/openclaw/dist/index.js`)，非 Docker，端口 8080
+- OpenClaw: Node.js 直接运行 (`/opt/openclaw/dist/index.js`)，非 Docker，端口 15970 (WebSocket 网关)
 - Python: 需使用 `python3.11`（系统自带 3.6 太旧），venv 创建用 `python3.11 -m venv venv`
 - Kickstarter skill triggers at UTC 00:00; Product Hunt at UTC 08:00
 - Raw data files land at `/data/kickstarter/raw_projects.json` and `/data/producthunt/raw_products.json`

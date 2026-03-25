@@ -40,13 +40,15 @@ python src/main.py --test
 ## 远程触发
 
 ```bash
-# 增量抓取
-curl -X POST http://47.254.73.23:8080/api/kickstarter/trigger \
-  -H "Authorization: Bearer $OPENCLAW_TOKEN"
+# SSH 到服务器后手动执行
+ssh root@47.254.73.23
 
-# 全量同步 (一键: 抓取 → diff → 入库 → 通知)
-curl -X POST http://47.254.73.23:8080/api/kickstarter/full-sync \
-  -H "Authorization: Bearer $OPENCLAW_TOKEN"
+# 全量同步 (抓取 → diff → 入库 → 通知)
+cd /opt/cortexcrawl/kickstarter-workflow && ./run-full-sync.sh
+cd /opt/cortexcrawl/producthunt-workflow && ./run-full-sync.sh
+
+# 仅看 diff，不写入
+./run-full-sync.sh --test
 ```
 
 ## 项目结构
@@ -79,6 +81,6 @@ CortexCrawl/
 ## 部署
 
 - 服务器: 阿里云 ECS `47.254.73.23` (Alibaba Cloud Linux 3)
-- OpenClaw: Node.js 直接运行 `:8080` (非 Docker)
+- OpenClaw: Node.js 直接运行 `:15970` (WebSocket 网关，非 Docker)
 - Python: 需 3.9+，服务器用 `python3.11`
 - 详见 [DEPLOYMENT.md](DEPLOYMENT.md)
