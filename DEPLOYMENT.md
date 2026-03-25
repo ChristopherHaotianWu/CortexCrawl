@@ -305,7 +305,7 @@ FEISHU_TABLE_ID=tblxxxxxxxxxxxxxxxxxxx
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/...  # 可选
 
 OPENCLAW_BASE_URL=http://localhost:15970
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=$OPENCLAW_TOKEN
 ```
 
 ---
@@ -346,7 +346,7 @@ FEISHU_TABLE_ID=tblyyyyyyyyyyyyyyyyyy
 FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/...  # 可选
 
 OPENCLAW_BASE_URL=http://localhost:15970
-OPENCLAW_TOKEN=d171c5fce114f7c6a1c13f5ac424b3c9
+OPENCLAW_TOKEN=$OPENCLAW_TOKEN
 
 PRODUCT_HUNT_API_TOKEN=your_token_here      # 可选，用于提升请求配额
 ```
