@@ -1,0 +1,130 @@
+# OpenClaw Skill 配置: 微信小程序 Monitor
+# 此配置文件定义了微信小程序抓取的规则和参数
+
+skill:
+  name: wechat-miniprogram-monitor
+  version: 1.0.0
+  description: 监控微信小程序热门应用 (阿拉丁指数)
+  
+  # 触发器配置
+  triggers:
+    - type: schedule
+      cron: "0 4 * * *"  # 每天 UTC 04:00 执行 (北京时间 12:00)
+      timezone: "UTC"
+    
+    # 可选：手动触发 (增量抓取)
+    - type: webhook
+      path: /api/wechat-miniprogram/trigger
+      method: POST
+      auth: bearer_token
+
+    # 全量同步：一键抓取 + diff + 入库
+    - type: webhook
+      path: /api/wechat-miniprogram/full-sync
+      method: POST
+      auth: bearer_token
+      action: script
+      script: /opt/cortexcrawl/wechat-miniprogram-workflow/run-full-sync.sh
+      timeout: 600
+
+  # 数据源配置
+  sources:
+    - name: alading-rank-api
+      type: api
+      base_url: https://www.aldzs.com/api
+      headers:
+        Content-Type: application/json
+        Accept: application/json
+      # 需要在环境变量中设置 ALADING_API_TOKEN
+
+  # 数据处理管道
+  pipeline:
+    steps:
+      # Step 1: 抓取排行榜
+      - name: fetch_rank_list
+        action: fetch
+        source: alading-rank-api
+        pagination:
+          enabled: true
+          max_pages: 20
+          param_name: page
+        
+      # Step 2: 月活筛选 (>= 10000)
+      - name: filter_by_mau
+        action: filter
+        conditions:
+          - field: monthlyActiveUsers
+            operator: gte
+            value: 10000
+            
+      # Step 3: 分类筛选 (可选，留空表示全部分类)
+      - name: filter_by_category
+        action: filter
+        conditions:
+          - field: category
+            operator: in
+            value: []  # 留空表示所有分类
+
+      # Step 4: 获取小程序详情
+      - name: enrich_miniprogram_details
+        action: fetch_details
+        source: alading-rank-api
+        fields:
+          - name                    # 小程序名称
+          - category                # 分类
+          - description             # 简介
+          - developer               # 开发者/公司
+          - monthlyActiveUsers      # 月活跃用户
+          - dailyActiveUsers        # 日均活跃用户
+          - rating                  # 评分
+          - releaseDate             # 上线日期
+          - appId                   # 小程序 ID
+          - coverUrl                # 封面图
+          - tags                    # 标签
+          
+      # Step 5: 数据格式化
+      - name: format_output
+        action: transform
+        mapping:
+          小程序名称: "{{name}}"
+          分类: "{{category}}"
+          简介: "{{description}}"
+          开发者: "{{developer}}"
+          月活用户数: "{{monthlyActiveUsers}}"
+          日均活跃用户: "{{dailyActiveUsers}}"
+          评分: "{{rating}}"
+          上线日期: "{{releaseDate | format_date}}"
+          小程序ID: "{{appId}}"
+          封面图: "{{coverUrl}}"
+          标签: "{{tags | join(', ')}}"
+          小程序链接: "https://weixin.qq.com/r/{{appId}}"
+          履历: ""  # 预留，手动补充
+          融资历史: ""  # 预留，手动补充
+
+  # 输出配置
+  output:
+    # 输出到文件 (供 Python 脚本处理)
+    - type: file
+      path: /data/wechat-miniprogram/raw_miniprograms.json
+      format: json
+      
+    # 触发下游工作流
+    - type: webhook
+      url: http://localhost:8000/api/process-wechat-miniprogram-data
+      method: POST
+      headers:
+        Authorization: "Bearer {{env.OPENCLAW_TOKEN}}"
+
+  # 错误处理
+  error_handling:
+    retry:
+      max_attempts: 3
+      backoff: exponential
+    on_failure:
+      - type: log
+        level: error
+      - type: webhook
+        url: http://localhost:8000/api/alert
+        payload:
+          message: "微信小程序抓取失败"
+          error: "{{error.message}}"
