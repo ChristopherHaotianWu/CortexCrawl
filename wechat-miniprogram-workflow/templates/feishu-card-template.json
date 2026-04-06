@@ -1,0 +1,101 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "config": {
+      "wide_screen_mode": true,
+      "enable_forward": true
+    },
+    "header": {
+      "template": "green",
+      "title": {
+        "tag": "plain_text",
+        "content": "📱 微信小程序监控日报 ({{date}})"
+      }
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🎯 筛选标准:** 月活用户 >= 10,000 | 每日更新"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 今日统计概览**\n\n🆕 **新增小程序:** {{new_count}}\n📈 **更新小程序:** {{updated_count}}\n➖ **未变更:** {{unchanged_count}}\n📊 **监控中总计:** {{total_count}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🆕 新增热门小程序 (Top 5)**\n{{#new_miniprograms}}\n• **{{name}}**\n  👥 {{monthly_active_users}} 月活 | ⭐ {{rating}} 分 | 🏷️ {{category}}\n  🏢 {{developer}}\n  [🔗 查看小程序]({{url}})\n{{/new_miniprograms}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**📈 小程序活跃度更新 (Top 5)**\n{{#updated_miniprograms}}\n• **{{name}}**\n  👥 {{current_mau}} 月活 *(+{{mau_change}}, {{mau_change_percent}}%)*\n  📊 {{current_dau}} 日活 *(+{{dau_change}})*\n{{/updated_miniprograms}}"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**🏆 月活冠军**\n\n**{{top_miniprogram.name}}**\n👥 {{top_miniprogram.monthly_active_users}} 月活 | ⭐ {{top_miniprogram.rating}} 分\n🏷️ {{top_miniprogram.category}} | 🏢 {{top_miniprogram.developer}}\n[🔗 查看小程序]({{top_miniprogram.url}})"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "action",
+        "layout": "bisected",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "📋 查看完整数据"
+            },
+            "type": "primary",
+            "url": "https://www.feishu.cn/base/{{base_id}}"
+          },
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "📊 浏览阿拉丁指数"
+            },
+            "type": "default",
+            "url": "https://www.aldzs.com"
+          }
+        ]
+      },
+      {
+        "tag": "note",
+        "elements": [
+          {
+            "tag": "plain_text",
+            "content": "🤖 由 OpenClaw + 微信小程序 Monitor 自动发送"
+          }
+        ]
+      }
+    ]
+  }
+}
